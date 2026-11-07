@@ -14,7 +14,7 @@
 namespace {
 
 enum { ID_OPEN = 101, ID_PATH, ID_SELALL, ID_LIST, ID_ANALYZE, ID_DELETE, ID_MOVE,
-       ID_STATUS, IDT_PATH = 1, WM_ANALYZE_DONE = WM_APP + 1 };
+       ID_STATUS, ID_BYSIZE, IDT_PATH = 1, WM_ANALYZE_DONE = WM_APP + 1 };
 
 struct Entry {
     std::wstring name;
@@ -23,7 +23,7 @@ struct Entry {
     int group = 0;            // 0 = unique, >0 duplicate set id
 };
 
-HWND g_wnd, g_open, g_path, g_selAll, g_list, g_analyze, g_delete, g_move, g_status;
+HWND g_wnd, g_open, g_path, g_selAll, g_list, g_analyze, g_bysize, g_delete, g_move, g_status;
 HFONT g_font;
 std::wstring g_folder;
 std::vector<Entry> g_entries;     // lParam of list items = index here
@@ -99,7 +99,7 @@ void SyncSelAll() {
 }
 void EnableButtons() {
     BOOL e = !g_busy;
-    EnableWindow(g_analyze, e); EnableWindow(g_delete, e); EnableWindow(g_move, e); EnableWindow(g_open, e);
+    EnableWindow(g_analyze, e); EnableWindow(g_bysize, e); EnableWindow(g_delete, e); EnableWindow(g_move, e); EnableWindow(g_open, e);
 }
 
 void Populate() {
@@ -239,7 +239,30 @@ void StartAnalyze() {
     std::thread(Worker, std::move(items), g_entries.size()).detach();
 }
 
-void FinishAnalyze() {
+void FinishAnalyze(const wchar_t* label);
+
+// BY SIZE: treat files with identical size as duplicates, no file content is read (fast, but not exact).
+void SelectBySize() {
+    if (g_entries.empty()) { SetStatus(L"Nothing to analyze - open a folder first."); return; }
+    std::map<unsigned long long, std::vector<int>> bySize;
+    for (size_t i = 0; i < g_entries.size(); i++) if (g_entries[i].size > 0) bySize[g_entries[i].size].push_back((int)i);
+    g_result.assign(g_entries.size(), 0);
+    int next = 1;
+    for (auto& kv : bySize) {
+        auto& v = kv.second;
+        if (v.size() < 2) continue;
+        int keep = v[0];
+        for (int i : v) {
+            int r = CompareFileTime(&g_entries[i].time, &g_entries[keep].time);
+            if (r < 0 || (r == 0 && lstrcmpiW(g_entries[i].name.c_str(), g_entries[keep].name.c_str()) < 0)) keep = i;
+        }
+        for (int i : v) g_result[i] = (i == keep) ? -next : next;
+        next++;
+    }
+    FinishAnalyze(L"By size");
+}
+
+void FinishAnalyze(const wchar_t* label) {
     int maxg = 0;
     std::vector<bool> check(g_entries.size(), false);
     for (size_t i = 0; i < g_entries.size(); i++) {
@@ -264,7 +287,7 @@ void FinishAnalyze() {
     g_loading = false;
     InvalidateRect(g_list, nullptr, TRUE);
     SyncSelAll();
-    SetStatus(L"Analysis done: " + std::to_wstring(maxg) + L" duplicate set(s), " + std::to_wstring(dups) +
+    SetStatus(std::wstring(label) + L" done: " + std::to_wstring(maxg) + L" duplicate set(s), " + std::to_wstring(dups) +
               L" redundant file(s) selected (oldest copy of each is kept), " + FmtBytes(bytes) + L" can be freed.");
 }
 
@@ -331,8 +354,9 @@ void Layout() {
     y += listH + S(8);
     int bw = S(110);
     MoveWindow(g_analyze, m, y, bw, btnH, TRUE);
-    MoveWindow(g_delete, m + bw + S(8), y, bw, btnH, TRUE);
-    MoveWindow(g_move, m + 2 * (bw + S(8)), y, bw, btnH, TRUE);
+    MoveWindow(g_bysize, m + bw + S(8), y, bw, btnH, TRUE);
+    MoveWindow(g_delete, m + 2 * (bw + S(8)), y, bw, btnH, TRUE);
+    MoveWindow(g_move, m + 3 * (bw + S(8)), y, bw, btnH, TRUE);
     MoveWindow(g_status, m, y + btnH + S(4), w - 2 * m, statusH, TRUE);
     int lw = w - 2 * m - GetSystemMetrics(SM_CXVSCROLL) - S(8);
     ListView_SetColumnWidth(g_list, 1, S(170)); ListView_SetColumnWidth(g_list, 2, S(130));
@@ -362,6 +386,7 @@ LRESULT CALLBACK WndProc(HWND hwnd, UINT msg, WPARAM wp, LPARAM lp) {
             ListView_InsertColumn(g_list, i, &c);
         }
         g_analyze = Mk(L"BUTTON", L"Analyze", BS_PUSHBUTTON | WS_TABSTOP, ID_ANALYZE);
+        g_bysize = Mk(L"BUTTON", L"By size", BS_PUSHBUTTON | WS_TABSTOP, ID_BYSIZE);
         g_delete = Mk(L"BUTTON", L"Delete", BS_PUSHBUTTON | WS_TABSTOP, ID_DELETE);
         g_move = Mk(L"BUTTON", L"Move...", BS_PUSHBUTTON | WS_TABSTOP, ID_MOVE);
         g_status = Mk(L"STATIC", L"Open a folder to begin.", SS_LEFT | SS_ENDELLIPSIS, ID_STATUS);
@@ -380,6 +405,7 @@ LRESULT CALLBACK WndProc(HWND hwnd, UINT msg, WPARAM wp, LPARAM lp) {
         case ID_PATH: if (HIWORD(wp) == EN_CHANGE) SetTimer(hwnd, IDT_PATH, 600, nullptr); break;
         case ID_SELALL: SetAllChecks(SendMessageW(g_selAll, BM_GETCHECK, 0, 0) == BST_CHECKED); break;
         case ID_ANALYZE: if (!g_busy) StartAnalyze(); break;
+        case ID_BYSIZE: if (!g_busy) SelectBySize(); break;
         case ID_DELETE: if (!g_busy) DoDelete(); break;
         case ID_MOVE: if (!g_busy) DoMove(); break;
         }
@@ -392,7 +418,7 @@ LRESULT CALLBACK WndProc(HWND hwnd, UINT msg, WPARAM wp, LPARAM lp) {
             if (!p.empty() && p != g_folder && !g_busy) LoadFolder(p);
         }
         return 0;
-    case WM_ANALYZE_DONE: FinishAnalyze(); return 0;
+    case WM_ANALYZE_DONE: FinishAnalyze(L"Analysis"); return 0;
     case WM_NOTIFY: {
         NMHDR* nh = (NMHDR*)lp;
         if (nh->hwndFrom != g_list) break;

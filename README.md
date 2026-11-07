@@ -7,6 +7,7 @@ A small standalone Windows app (pure C++ / Win32, single exe, no dependencies) t
 ## Use
 1. **Open Folder...** (or paste a path) to list the files in a folder.
 2. **Analyze** finds files with identical content, ignoring names and dates, and ticks all but the oldest copy in each set.
+   **By size** is a fast alternative that selects files by identical size only, without reading their content. It can select files that merely have the same size, so review the ticks before deleting.
 3. **Delete** sends the ticked files to the Recycle Bin (after confirmation), or **Move...** moves them to another folder (never overwrites; renames to `name (2).ext` on conflict).
 
 Click a column header to sort by name, size or date. Only the selected folder is scanned, not subfolders. Empty files are skipped.
