@@ -2,6 +2,8 @@
 
 A small standalone Windows app (pure C++ / Win32, single exe, no dependencies) that finds and removes duplicate files in a folder.
 
+![Screenshot: duplicates found and pre-selected](docs/screenshot.png)
+
 ## Use
 1. **Open Folder...** (or paste a path) to list the files in a folder.
 2. **Analyze** finds files with identical content, ignoring names and dates, and ticks all but the oldest copy in each set.
